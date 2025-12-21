@@ -78,6 +78,18 @@ git clone https://github.com/exo-explore/exo && cd exo/dashboard && npm i && npm
 
 ---
 
+### Run from Source (Windows 11 - CPU-only, experimental)
+
+EXO now installs on Windows without macOS-only MLX dependencies. The Windows build runs the control plane, API, and monitoring features; model execution is currently unavailable on Windows.
+
+```powershell
+git clone https://github.com/exo-explore/exo
+cd exo
+uv run exo
+```
+
+---
+
 ### macOS App
 
 EXO ships a macOS app that runs in the background on your Mac.
