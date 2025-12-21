@@ -4,6 +4,7 @@ import platform
 from typing import Any, Callable, Coroutine
 
 import anyio
+import psutil
 from loguru import logger
 
 from exo.shared.types.memory import Memory
@@ -16,6 +17,7 @@ from exo.shared.types.profiling import (
 from .macmon import (
     MacMonError,
     Metrics,
+    TempMetrics,
 )
 from .macmon import (
     get_metrics_async as macmon_get_metrics_async,
@@ -28,10 +30,49 @@ from .system_info import (
 
 
 async def get_metrics_async() -> Metrics | None:
-    """Return detailed Metrics on macOS or a minimal fallback elsewhere."""
+    """Return system Metrics on macOS (via macmon) or a psutil fallback elsewhere."""
 
-    if platform.system().lower() == "darwin":
+    system = platform.system().lower()
+
+    if system == "darwin":
         return await macmon_get_metrics_async()
+
+    return await anyio.to_thread.run_sync(_collect_generic_metrics)
+
+
+def _collect_generic_metrics() -> Metrics:
+    """Gather cross-platform metrics using psutil for non-macOS hosts."""
+
+    cpu_percent = psutil.cpu_percent(interval=None)
+    logical_cpus = psutil.cpu_count(logical=True) or 0
+    avg_temp = 0.0
+    try:
+        temps = psutil.sensors_temperatures(fahrenheit=False)
+        flat_temps = [
+            sensor.current
+            for readings in temps.values()
+            for sensor in readings
+            if sensor.current is not None
+        ]
+        avg_temp = float(sum(flat_temps) / len(flat_temps)) if flat_temps else 0.0
+    except (NotImplementedError, psutil.Error):
+        # Some platforms do not expose temperature sensors
+        pass
+
+    return Metrics(
+        all_power=0.0,
+        ane_power=0.0,
+        cpu_power=0.0,
+        ecpu_usage=(0, 0.0),
+        gpu_power=0.0,
+        gpu_ram_power=0.0,
+        gpu_usage=(0, 0.0),
+        pcpu_usage=(logical_cpus, cpu_percent),
+        ram_power=0.0,
+        sys_power=0.0,
+        temp=TempMetrics(cpu_temp_avg=avg_temp, gpu_temp_avg=avg_temp),
+        timestamp="",
+    )
 
 
 def get_memory_profile() -> MemoryPerformanceProfile:

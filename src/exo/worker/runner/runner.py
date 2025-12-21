@@ -33,12 +33,13 @@ from exo.shared.types.worker.runners import (
     RunnerWarmingUp,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
-from exo.worker.engines.mlx.generator.generate import mlx_generate, warmup_inference
-from exo.worker.engines.mlx.utils_mlx import (
-    initialize_mlx,
-    mlx_force_oom,
-)
 from exo.worker.runner.bootstrap import logger
+from exo.worker.engines.mlx.availability import (
+    MlxUnavailableError,
+    load_mlx_backend,
+)
+
+_mlx_backend = None
 
 
 def main(
@@ -58,6 +59,7 @@ def main(
         if timeout := getattr(shard_metadata, "should_timeout", 0):
             time.sleep(timeout)
 
+        global _mlx_backend
         setup_start_time = time.time()
 
         model = None
@@ -81,6 +83,23 @@ def main(
                     case LoadModel() if isinstance(
                         current_status, (RunnerWaitingForModel, RunnerFailed)
                     ):
+                        try:
+                            _mlx_backend = load_mlx_backend()
+                        except MlxUnavailableError as exc:
+                            current_status = RunnerFailed(error_message=str(exc))
+                            event_sender.send(
+                                RunnerStatusUpdated(
+                                    runner_id=runner_id, runner_status=current_status
+                                )
+                            )
+                            event_sender.send(
+                                TaskStatusUpdated(
+                                    task_id=task.task_id,
+                                    task_status=TaskStatus.Failed,
+                                )
+                            )
+                            break
+
                         current_status = RunnerLoading()
                         logger.info("runner loading")
                         event_sender.send(
@@ -89,7 +108,10 @@ def main(
                             )
                         )
 
-                        model, tokenizer, sampler = initialize_mlx(bound_instance)
+                        assert _mlx_backend
+                        model, tokenizer, sampler = _mlx_backend.initialize_mlx(
+                            bound_instance
+                        )
 
                         current_status = RunnerLoaded()
                         logger.info("runner loaded")
@@ -110,8 +132,25 @@ def main(
                             )
                         )
 
+                        if _mlx_backend is None:
+                            current_status = RunnerFailed(
+                                error_message="MLX backend not initialized."
+                            )
+                            event_sender.send(
+                                RunnerStatusUpdated(
+                                    runner_id=runner_id, runner_status=current_status
+                                )
+                            )
+                            event_sender.send(
+                                TaskStatusUpdated(
+                                    task_id=task.task_id,
+                                    task_status=TaskStatus.Failed,
+                                )
+                            )
+                            break
+
                         logger.info(f"warming up inference for instance: {instance}")
-                        toks = warmup_inference(
+                        toks = _mlx_backend.warmup_inference(
                             model=model,
                             tokenizer=tokenizer,
                             sampler=sampler,
@@ -134,6 +173,23 @@ def main(
                         assert model
                         assert tokenizer
                         assert sampler
+                        if _mlx_backend is None:
+                            current_status = RunnerFailed(
+                                error_message="MLX backend not initialized."
+                            )
+                            event_sender.send(
+                                RunnerStatusUpdated(
+                                    runner_id=runner_id, runner_status=current_status
+                                )
+                            )
+                            event_sender.send(
+                                TaskStatusUpdated(
+                                    task_id=task.task_id,
+                                    task_status=TaskStatus.Failed,
+                                )
+                            )
+                            break
+
                         logger.info(f"received chat request: {str(task)[:500]}")
                         current_status = RunnerRunning()
                         logger.info("runner running")
@@ -143,10 +199,12 @@ def main(
                             )
                         )
                         assert task_params.messages[0].content is not None
-                        _check_for_debug_prompts(task_params.messages[0].content)
+                        _check_for_debug_prompts(
+                            task_params.messages[0].content, _mlx_backend
+                        )
 
                         # Generate responses using the actual MLX generation
-                        for response in mlx_generate(
+                        for response in _mlx_backend.mlx_generate(
                             model=model,
                             tokenizer=tokenizer,
                             sampler=sampler,
@@ -222,6 +280,7 @@ EXO_RUNNER_MUST_TIMEOUT = "EXO RUNNER MUST TIMEOUT"
 
 def _check_for_debug_prompts(
     prompt: str | ChatCompletionMessageText | list[ChatCompletionMessageText],
+    mlx_backend,
 ):
     if isinstance(prompt, list):
         if len(prompt) == 0:
@@ -236,6 +295,9 @@ def _check_for_debug_prompts(
         logger.info("raising exception")
         raise Exception("Artificial runner exception - for testing purposes only.")
     if EXO_RUNNER_MUST_OOM in prompt:
-        mlx_force_oom()
+        if mlx_backend:
+            mlx_backend.mlx_force_oom()
+        else:
+            logger.warning("Skipping forced OOM: MLX backend unavailable.")
     if EXO_RUNNER_MUST_TIMEOUT in prompt:
         time.sleep(100)
