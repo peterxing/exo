@@ -1,3 +1,4 @@
+import platform
 import socket
 import sys
 from subprocess import CalledProcessError
@@ -51,12 +52,15 @@ def get_network_interfaces() -> list[NetworkInterfaceInfo]:
 
 
 async def get_model_and_chip() -> tuple[str, str]:
-    """Get Mac system information using system_profiler."""
+    """Get system information using platform-specific sources."""
     model = "Unknown Model"
     chip = "Unknown Chip"
 
     # TODO: better non mac support
     if sys.platform != "darwin":
+        uname = platform.uname()
+        model = uname.system or model
+        chip = uname.processor or chip
         return (model, chip)
 
     try:

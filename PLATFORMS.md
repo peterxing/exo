@@ -12,7 +12,7 @@ Apple Silicon MacOS
 
 ## Tier 3 support - minimal support and testing, but no theoretical reason it shouldnt work
 
-
+- Windows 11 (CPU control plane only; model execution not yet enabled)
 # Planned
 
 ## Tier 1
@@ -35,4 +35,3 @@ Linux CUDA Support -- depends heavily on ecosystem
 Windows CUDA Support
 
 Windows CPU Support
-
