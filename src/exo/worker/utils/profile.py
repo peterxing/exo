@@ -29,6 +29,9 @@ from .system_info import (
 )
 
 
+_temp_warning_logged = False
+
+
 async def get_metrics_async() -> Metrics | None:
     """Return system Metrics on macOS (via macmon) or a psutil fallback elsewhere."""
 
@@ -47,7 +50,11 @@ def _collect_generic_metrics() -> Metrics:
     logical_cpus = psutil.cpu_count(logical=True) or 0
     avg_temp = 0.0
     try:
-        temps = psutil.sensors_temperatures(fahrenheit=False)
+        temps_func = getattr(psutil, "sensors_temperatures", None)
+        if temps_func is None:
+            raise AttributeError
+
+        temps = temps_func(fahrenheit=False)
         flat_temps = [
             sensor.current
             for readings in temps.values()
@@ -55,9 +62,15 @@ def _collect_generic_metrics() -> Metrics:
             if sensor.current is not None
         ]
         avg_temp = float(sum(flat_temps) / len(flat_temps)) if flat_temps else 0.0
-    except (NotImplementedError, psutil.Error):
+    except (AttributeError, NotImplementedError, psutil.Error):
         # Some platforms do not expose temperature sensors
-        pass
+        global _temp_warning_logged
+        if not _temp_warning_logged:
+            logger.warning(
+                "psutil temperature sensors are unavailable on this platform; "
+                "continuing without temperature metrics."
+            )
+            _temp_warning_logged = True
 
     return Metrics(
         all_power=0.0,

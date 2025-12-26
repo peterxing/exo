@@ -7,7 +7,7 @@ from anyio import create_task_group
 from anyio.abc import TaskGroup
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
 from hypercorn.config import Config
@@ -115,14 +115,27 @@ class API:
         self._setup_cors()
         self._setup_routes()
 
-        self.app.mount(
-            "/",
-            StaticFiles(
-                directory=find_dashboard(),
-                html=True,
-            ),
-            name="dashboard",
-        )
+        dashboard_path = find_dashboard()
+        if dashboard_path:
+            self.app.mount(
+                "/",
+                StaticFiles(
+                    directory=dashboard_path,
+                    html=True,
+                ),
+                name="dashboard",
+            )
+        else:
+            logger.warning(
+                "Dashboard assets are missing; serving a placeholder at '/' instead."
+            )
+            self.app.add_api_route(
+                "/",
+                lambda: PlainTextResponse(
+                    "Dashboard assets not found. Build the dashboard or set DASHBOARD_DIR to your built assets to enable the UI."
+                ),
+                include_in_schema=False,
+            )
 
         self._chat_completion_queues: dict[CommandId, Sender[TokenChunk]] = {}
         self._tg: TaskGroup | None = None

@@ -3,16 +3,18 @@ import sys
 from pathlib import Path
 from typing import cast
 
+from loguru import logger
 
-def find_dashboard() -> Path:
+
+def find_dashboard() -> Path | None:
     dashboard = (
         _find_dashboard_in_env()
         or _find_dashboard_in_repo()
         or _find_dashboard_in_bundle()
     )
     if not dashboard:
-        raise FileNotFoundError(
-            "Unable to locate dashboard assets - make sure the dashboard has been built, or export DASHBOARD_DIR if you've built the dashboard elsewhere."
+        logger.warning(
+            "Unable to locate dashboard assets - start the dashboard build or export DASHBOARD_DIR if you've built the dashboard elsewhere."
         )
     return dashboard
 
